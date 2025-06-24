@@ -1,0 +1,92 @@
+// ChatServer.java
+import java.io.*;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class ChatServer {
+
+    private static final int PORT = 12345; // Port to listen on
+    private static Set<PrintWriter> clientWriters = new CopyOnWriteArraySet<>(); // Thread-safe set for output streams
+
+    public static void main(String[] args) {
+        System.out.println("Chat Server Started on port " + PORT);
+        ExecutorService pool = Executors.newFixedThreadPool(100); // Thread pool for client handlers
+
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            while (true) {
+                Socket clientSocket = serverSocket.accept(); // Blocks until a client connects
+                System.out.println("New client connected: " + clientSocket);
+                // Submit the client handler task to the thread pool
+                pool.execute(new ClientHandler(clientSocket));
+            }
+        } catch (IOException e) {
+            System.err.println("Server exception: " + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            pool.shutdown(); // Shut down the thread pool when the server stops
+        }
+    }
+
+    // Method to broadcast a message to all connected clients
+    public static void broadcastMessage(String message) {
+        for (PrintWriter writer : clientWriters) {
+            writer.println(message);
+        }
+    }
+
+    // Inner class to handle individual client connections
+    private static class ClientHandler implements Runnable {
+        private Socket socket;
+        private String clientName;
+        private BufferedReader in;
+        private PrintWriter out;
+
+        public ClientHandler(Socket socket) {
+            this.socket = socket;
+        }
+
+        @Override
+        public void run() {
+            try {
+                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                out = new PrintWriter(socket.getOutputStream(), true); // true for auto-flush
+
+                // Prompt client for a name and add to writers set
+                out.println("SUBMITNAME"); // Special command for client to submit name
+                String name = in.readLine();
+                if (name == null) {
+                    return; // Client disconnected immediately
+                }
+                clientName = name;
+                System.out.println(clientName + " has joined the chat.");
+                broadcastMessage(clientName + " has joined the chat.");
+                clientWriters.add(out); // Add this client's writer to the set
+
+                String message;
+                while ((message = in.readLine()) != null) {
+                    if (message.startsWith("QUIT")) {
+                        break; // Client wants to quit
+                    }
+                    System.out.println("[" + clientName + "]: " + message);
+                    broadcastMessage("[" + clientName + "]: " + message);
+                }
+            } catch (IOException e) {
+                System.err.println("Client handler error for " + clientName + ": " + e.getMessage());
+            } finally {
+                if (clientName != null) {
+                    System.out.println(clientName + " has left the chat.");
+                    broadcastMessage(clientName + " has left the chat.");
+                }
+                if (out != null) {
+                    clientWriters.remove(out); // Remove the writer when client disconnects
+                }
+                try {
+                    socket.close(); // Close the client socket
+                } catch (IOException e) {
+                    System.err.println("Error closing socket for " + clientName + ": " + e.getMessage());
+                }
+            }
+        }
+    }
+}
